@@ -77,7 +77,6 @@ function Get-InvoiceData
     $invoiceData['Company'] = "{0} ({1})" -f $companies[$index].COMPANY.Trim('.'), $companies[$index].COUNTRY
     $invoiceData['InvoiceDate'] = Get-Date -Year (Get-Random -Minimum 2001 -Maximum 2018) -Month (Get-Random -Minimum 1 -Maximum 12) -Day (Get-Random -Minimum 1 -Maximum 28)
     $invoiceData['Filename'] = "Invoice - {0} - {1}.pdf" -f $invoiceData['Company'], ($invoiceData['InvoiceDate'].ToString('yyyy-MM-dd'))
-    $invoiceData['FilePath'] = Join-Path $script:outPath $invoiceData['Filename'] 
     $invoiceData['Value'] = Get-Random -min 1000 -max 100000
 
     $invoicedata = New-Object -TypeName PSObject -Property $InvoiceData 
@@ -86,10 +85,18 @@ function Get-InvoiceData
 
 function New-InvoiceFile
 {
-    [CmdletBinding()]param()
+    [CmdletBinding()]param(
+        [Parameter(Mandatory=$false)]
+        [string]$OutputFolder
+    )
 
+    if([string]::IsNullOrEmpty($OutputFolder))
+    {
+        $OutputFolder = $script:outPath
+    }
 
     $InvoiceData = Get-InvoiceData
+    $invoiceData['FilePath'] = Join-Path $OutputFolder $invoiceData['Filename'] 
 
     Write-Verbose "Create Document in Word"
     $doc = $script:word.Documents.add()
