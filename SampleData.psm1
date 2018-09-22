@@ -1,82 +1,135 @@
 ﻿
-[boolean]$script:initialized = $false
-[string]$script:outPath = Join-Path $env:TEMP 'SampleData'
-
-function Start-SampleData
+function Initialize-Data
 {
-    [CmdletBinding()]param()
+    $companiesFilePath = Join-Path $PSScriptRoot 'companies.csv'
+    Write-Verbose "Get Companies Data: $companiesFilePath" -Verbose
+    $script:companies = Import-Csv $companiesFilePath
 
-    if(! $script:initialized)
-    {
-        Write-Verbose "Start-SampleData"
+    $firstnamesPath = Join-Path $PSScriptRoot 'firstnames.csv'
+    Write-Verbose "Get Firstname Data: $firstnamesPath" -Verbose
+    $script:firstnames = Import-Csv $firstnamesPath
 
-        if( $null -eq $script:word)
-        {
-            Write-Verbose "Create Word Object"
-            Add-Type -AssemblyName "Microsoft.Office.Interop.Word" | Out-Null
-            $script:word = New-Object -ComObject word.application
-        }
+    $lastnamesPath = Join-Path $PSScriptRoot 'lastnames.csv'
+    Write-Verbose "Get Lastname Data:  $lastnamesPath" -Verbose
+    $script:lastnames = Import-Csv $lastnamesPath
 
-        if( $null -eq $script:companies)
-        {
-            $companiesFilePath = Join-Path $PSScriptRoot 'companies.csv'
-            Write-Verbose "Get Companies Data ($companiesFilePath.csv)"
-            $script:companies = Import-Csv $companiesFilePath
-        }
-
-        if( $null -eq $script:rand)
-        {
-            Write-Verbose "Create Rand Object"
-            $script:rand = New-Object -Type System.Random
-        }
-
-        Write-Verbose "Output path: $script:outPath"
-        if( ! (Test-Path $script:outPath) )
-        {
-            Write-Verbose "Create Output Dir: $script:outPath"
-            New-Item -Path $script:outPath -ItemType Directory | Out-Null
-        }
-
-        $script:initialized = $true
-    }
+    Write-Verbose "Create Rand Object"
+    $script:rand = New-Object -Type System.Random
 }
+Initialize-Data
 
-
-function Stop-SampleData
+function New-Document
 {
-    [CmdletBinding()]param()
+    param(
+        [Parameter(Mandatory=$true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Filename,
+        
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('pdf','docx','doc','txt','rtf')]
+        [string]$FileType = 'pdf',
 
-    try
+        [Parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string]$FileContent,
+
+        [Parameter(Mandatory=$true,ParameterSetName='LiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolder = ( Join-Path ([Environment]::GetFolderPath('Desktop')) 'Samples' ),
+
+        [Parameter(Mandatory=$true,ParameterSetName='RelativePath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolderRel,
+
+        [Parameter(Mandatory=$false)]
+        [datetime]$CreationTime = (Get-Date),
+
+        [Parameter(Mandatory=$false)]
+        [datetime]$LastWriteTime = (Get-Date),
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Force
+    )
+
+    BEGIN
     {
-        Write-Verbose "Stop-SampleData"
-        $word.Quit()
-    }
-    catch 
-    {
-        Write-Warning $_
+        $wordObject = New-Object -ComObject word.application
     }
 
-    $script:initialized = $false
+    PROCESS
+    {
+        if( $PSCmdlet.ParameterSetName -eq 'RelativePath' )
+        {
+            $OutputFolder = Join-Path $OutputFolder $OutputFolderRel
+        }
+
+        if( !(Test-Path $OutputFolder) )
+        {
+            if( $Force.IsPresent )
+            {
+                New-Item -ItemType Directory -Path $OutputFolder -Force | Out-Null
+            }
+            else
+            {
+                throw "OutputFolder Path does not exist. Use '-Force' to create. '$OutputFolder'"
+            }
+        }
+
+        [string]$filePath = Join-Path $OutputFolder $Filename
+        Write-Verbose "Save: $filePath"
+
+        Write-Verbose "Create Document in Word"
+        $doc = $wordObject.Documents.add()
+        $selection = $wordObject.Selection
+        if( [string]::IsNullOrEmpty($FileContent) )
+        {
+            $selection.Text = $Filename
+        }
+        else
+        {
+            $selection.Text = $FileContent
+        }
+
+        switch($FileType) {
+            'pdf'  { $fmt = [Microsoft.Office.Interop.Word.WdSaveFormat]::wdFormatPDF; break }
+            'docx' { $fmt = [Microsoft.Office.Interop.Word.WdSaveFormat]::wdFormatDocumentDefault; break }
+            'doc'  { $fmt = [Microsoft.Office.Interop.Word.WdSaveFormat]::wdFormatDocument; break }
+            'txt'  { $fmt = [Microsoft.Office.Interop.Word.WdSaveFormat]::wdFormatText; break }
+            'rtf'  { $fmt = [Microsoft.Office.Interop.Word.WdSaveFormat]::wdFormatRTF; break }
+        }
+        $doc.SaveAs( [ref]$filePath, [ref]$fmt )
+        $doc.Close( [ref]([Microsoft.Office.Interop.Word.WdSaveOptions]::wdDoNotSaveChanges) )
+
+        Write-Verbose 'Update File Date'
+        Set-ItemProperty -Path $filePath -Name CreationTime  -Value $CreationTime
+        Set-ItemProperty -Path $filePath -Name LastWriteTime -Value $LastWriteTime
+
+        Write-Output $filePath
+    }
+
+    END
+    {
+        $wordObject.Quit()
+    }
+
 }
-
 
 function Get-InvoiceData
 {
-    [CmdletBinding()]param()
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('pdf','docx','doc','txt','rtf')]
+        [string]$FileType = 'pdf'
+    )
 
     Write-Verbose "Get-InvoiceData"
-
-    if(!$script:initialized)
-    {
-        Start-SampleData
-       #throw 'Not Initialized. Call Start-SampleData'
-    }
 
     $index = $script:rand.Next(0,($companies.Count))
     $invoiceData = @{}
     $invoiceData['Company'] = "{0} ({1})" -f $companies[$index].COMPANY.Trim('.'), $companies[$index].COUNTRY
     $invoiceData['InvoiceDate'] = Get-Date -Year (Get-Random -Minimum 2001 -Maximum 2018) -Month (Get-Random -Minimum 1 -Maximum 12) -Day (Get-Random -Minimum 1 -Maximum 28)
-    $invoiceData['Filename'] = "Invoice - {0} - {1}.pdf" -f $invoiceData['Company'], ($invoiceData['InvoiceDate'].ToString('yyyy-MM-dd'))
+    $invoiceData['Filename'] = "Invoice - {0} - {1}.{2}" -f $invoiceData['Company'], ($invoiceData['InvoiceDate'].ToString('yyyy-MM-dd')), $FileType
     $invoiceData['Value'] = Get-Random -min 1000 -max 100000
 
     $invoicedata = New-Object -TypeName PSObject -Property $InvoiceData 
@@ -85,143 +138,213 @@ function Get-InvoiceData
 
 function New-InvoiceFile
 {
-    [CmdletBinding()]param(
+    [CmdletBinding(DefaultParameterSetName='LiteralPath')]
+    param(
+        [Parameter(Mandatory=$false,ParameterSetName='LiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolder = ( Join-Path ([Environment]::GetFolderPath('Desktop')) 'Samples' ),
+
+        [Parameter(Mandatory=$false,ParameterSetName='RelativePath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolderRel = 'Invoices',
+
         [Parameter(Mandatory=$false)]
-        [string]$OutputFolder
+        [ValidateSet('pdf','docx','doc','txt','rtf')]
+        [string]$FileType = 'pdf',
+
+        [Parameter(Mandatory=$false)]
+        [switch]$Force
     )
 
-    if([string]::IsNullOrEmpty($OutputFolder))
-    {
-        $OutputFolder = $script:outPath
+    $InvoiceData = Get-InvoiceData -FileType $FileType
+
+    $params = @{
+        Filename = $invoiceData.Filename
+        FileContent = ($InvoiceData | ConvertTo-Json)
+        CreationTime = $InvoiceData.InvoiceDate
+        LastWriteTime = $InvoiceData.InvoiceDate
+        FileType = $FileType
+        Force = $Force.IsPresent
     }
 
-    $InvoiceData = Get-InvoiceData
-    $invoiceData['FilePath'] = Join-Path $OutputFolder $invoiceData['Filename'] 
+    if($PSCmdlet.ParameterSetName -eq 'LiteralPath') {
+        $params['OutputFolder'] = $OutputFolder
+    } 
+    else {
+        $params['OutputFolderRel'] = $OutputFolderRel
+    }
 
-    Write-Verbose "Create Document in Word"
-    $doc = $script:word.Documents.add()
-    $selection = $Word.Selection
-    $selection.Text = $invoiceData.Filename
-
-    [string]$filePath = $InvoiceData.FilePath
-    Write-Verbose "Save: $filePath"
-    $fmt = [Microsoft.Office.Interop.Word.WdSaveFormat]::wdFormatPDF
-    $doc.SaveAs( [ref]$filePath, [ref]$fmt )
-    $doc.Close( [ref]([Microsoft.Office.Interop.Word.WdSaveOptions]::wdDoNotSaveChanges) )
-
-    Write-Verbose 'Update File Date'
-    Set-ItemProperty -Path $filePath -Name CreationTime  -Value $invoiceData.InvoiceDate
-    Set-ItemProperty -Path $filePath -Name LastWriteTime -Value $invoiceData.InvoiceDate
-
-    Write-Output $InvoiceData
+    New-Document @params
 }
 
 
 function New-InvoiceFiles
 {
-    [CmdletBinding()]param(
-        [int]$Count
-    )
+    [CmdletBinding(DefaultParameterSetName='LiteralPath')]
+    param(
+        [Parameter(Mandatory=$false)]
+        [int]$Count = 10,
 
-    1..$Count | %{ New-InvoiceFile }
+        [Parameter(Mandatory=$false,ParameterSetName='LiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolder = ( Join-Path ([Environment]::GetFolderPath('Desktop')) 'Samples' ),
+
+        [Parameter(Mandatory=$false,ParameterSetName='RelativePath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolderRel = 'Invoices',
+
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('pdf','docx','doc','txt','rtf')]
+        [string]$FileType = 'pdf'
+
+    )
+    
+
+    1..$Count | %{ 
+        if($PSCmdlet.ParameterSetName -eq 'LiteralPath') {
+            New-InvoiceFile -OutputFolder $OutputFolder -FileType $FileType 
+        } 
+        else {
+            New-InvoiceFile -OutputFolderRel $OutputFolderRel -FileType $FileType 
+        }
+    }
 
 }
 
 
-function Clear-SampleDataFiles
+function New-ContractFile
 {
-    [CmdletBinding()]param()
+    [CmdletBinding(DefaultParameterSetName='LiteralPath')]
+    param(
+        [Parameter(Mandatory=$false,ParameterSetName='LiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolder = ( Join-Path ([Environment]::GetFolderPath('Desktop')) 'Samples' ),
 
-    Write-Verbose "Clear-SampleDataFiles"
+        [Parameter(Mandatory=$false,ParameterSetName='RelativePath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolderRel = 'Invoices',
 
-    try
-    {
-        Remove-Item -Path $script:outPath -Recurse -Force
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('pdf','docx','doc','txt','rtf')]
+        [string]$FileType = 'pdf'
+    )
+
+    $InvoiceData = Get-InvoiceData -FileType $FileType
+
+    $contractName = "{0} - {1}" -f $InvoiceData.InvoiceDate.Year, $InvoiceData.Company
+    @('SoW','Contract','Appendix1','Appendix2','Appendix2') | %{
+        $params = @{
+            Filename = "{0} - {1}.{2}" -f $contractName, $_, $FileType
+            FileContent = ($InvoiceData | ConvertTo-Json)
+            CreationTime = $InvoiceData.InvoiceDate
+            LastWriteTime = $InvoiceData.InvoiceDate
+            FileType = $FileType
+        }
+
+        if($PSCmdlet.ParameterSetName -eq 'LiteralPath') {
+            $params['OutputFolder'] = Join-Path $OutputFolder $contractName
+        } 
+        else {
+            $params['OutputFolderRel'] = "{0}\{1}" -f $OutputFolderRel, $contractName
+        }
+
+        New-Document @params -Force
     }
-    catch
-    {
-        Write-Verbose $_
+}
+
+
+function New-ContractFiles
+{
+    [CmdletBinding(DefaultParameterSetName='LiteralPath')]
+    param(
+        [Parameter(Mandatory=$false)]
+        [int]$Count = 10,
+
+        [Parameter(Mandatory=$false,ParameterSetName='LiteralPath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolder = ( Join-Path ([Environment]::GetFolderPath('Desktop')) 'Samples' ),
+
+        [Parameter(Mandatory=$false,ParameterSetName='RelativePath')]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolderRel = 'Invoices',
+
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('pdf','docx','doc','txt','rtf')]
+        [string]$FileType = 'pdf'
+
+    )
+    
+
+    1..$Count | %{ 
+        if($PSCmdlet.ParameterSetName -eq 'LiteralPath') {
+            New-ContractFile -OutputFolder $OutputFolder -FileType $FileType 
+        } 
+        else {
+            New-ContractFile -OutputFolderRel $OutputFolderRel -FileType $FileType 
+        }
     }
+
 }
 
 
 
 function Get-HireDate
 {
-    $dt = [DateTime](Get-Random -Minimum (Get-Date '1/1/1990').Ticks  -Maximum (Get-Date '1/1/2010').Ticks)
-#   $dt = [DateTime](Get-Random -Minimum (Get-Date '1/1/1990').Ticks  -Maximum (Get-Date).Ticks)
-#   $dt.ToShortDateString()
-    $dt
+    param(
+        [Parameter(Mandatory=$false)]
+        [datetime]$MinHireDate = (Get-Date '1/1/1990'),
+
+        [Parameter(Mandatory=$false)]
+        [datetime]$MaxHireDate = (Get-Date '1/1/2010')
+    )
+
+    $dt = [DateTime](Get-Random -Minimum ($MinHireDate).Ticks  -Maximum ($MaxHireDate).Ticks)
+    Write-Output $dt
 }
 
 
-function Get-TermDate([DateTime]$HireDate)
+function Get-TermDate
 {
-    if( [Boolean](Get-Random -Minimum 0 -Maximum 2) ) { 
+    param(
+        [Parameter(Mandatory=$true,ValueFromPipeline=$True)]
+        [datetime]$HireDate
+    )
+
+    if( [Boolean](Get-Random -Minimum 0 -Maximum 2) ) 
+    { 
         $dt = [DateTime](Get-Random -Minimum $HireDate.Ticks -Maximum (Get-Date).Ticks)
-#       $dt.ToShortDateString()
-        $dt
+        Write-Output $dt
     } 
 }
 
 
-
-function Get-RandomFirstName
+function Get-FirstName
 {
     [CmdletBinding()]
     Param(
-        $basepath = $PSScriptRoot # (Get-Module EmployeeFiles).ModuleBase
     )
-
-    if($null -eq $script:rand)
-    {
-        Write-Verbose 'New Random'
-        $script:rand = New-Object -Type System.Random
-    }
-    
-    if($null -eq $script:firstnames) 
-    {
-        Write-Verbose (Join-Path $basepath 'firstnames.csv')
-        $script:firstnames = Import-Csv ( Join-Path $basepath 'firstnames.csv' )
-    }
-
     $script:firstnames[$rand.Next(0,($firstnames.Count))].Name
 }
-#Export-ModuleMember Get-RandomFirstName
 
 
-function Get-RandomLastName
+function Get-LastName
 {
     [CmdletBinding()]
     Param(
         $basepath = $PSScriptRoot #(Get-Module EmployeeFiles).ModuleBase
     )
-
-    if($null -eq $script:rand)
-    {
-        Write-Verbose 'New Random'
-        $script:rand = New-Object -Type System.Random
-    }
-    
-    if($null -eq $script:lastnames) 
-    {
-        Write-Verbose (Join-Path $basepath 'lastnames.csv')
-        $script:lastnames = Import-Csv ( Join-Path $basepath 'lastnames.csv' )
-    }
-
     $script:lastnames[$rand.Next(0,($lastnames.Count))].Name
 }
-#Export-ModuleMember Get-RandomLastName
 
 
-function Get-RandomEmployee
+function Get-Employee
 {
     [CmdletBinding()]
     Param(
     )
 
-    $first = Get-RandomFirstName
-    $last  = Get-RandomLastName
+    $first = Get-FirstName
+    $last  = Get-LastName
     $empId = Get-Random -min 100000 -max 999999
     $hireDate = Get-HireDate
     $termDate = Get-TermDate -HireDate $hireDate
@@ -238,19 +361,28 @@ function Get-RandomEmployee
 
     $file
 }
-#Export-ModuleMember -Function Get-RandomEmployee
 
 
-
-function Get-RandomEmployeeFile
+function Get-EmployeeFile
 {
     [CmdletBinding()]
     param(
+        [Parameter(Mandatory=$false)]
         [string]$Container,
-        [string]$Category
+
+        [Parameter(Mandatory=$false)]
+        [string]$Category,
+
+        [Parameter(Mandatory=$false)]
+        [ValidateNotNullOrEmpty()]
+        [string]$OutputFolder = ( Join-Path ([Environment]::GetFolderPath('Desktop')) 'Samples' ),
+
+        [Parameter(Mandatory=$false)]
+        [switch]$CreateFile
+    
     )
 
-    $file = Get-RandomEmployee
+    $file = Get-Employee
 
     $profile = 'Employee File'
     $title = "$($profile): $($file.'Employee Name') ($($file.'Employee Id'))"
@@ -268,52 +400,6 @@ function Get-RandomEmployeeFile
         Add-Member -InputObject $file -Name 'Category' -Value $Category -MemberType NoteProperty
     }
 
-    $file
+    Write-Output $file
 }
-#Export-ModuleMember -Function Get-RandomEmployeeFile
-
-
-function Get-RandomEmployeeFilesImportFile
-{
-    [CmdletBinding()]
-    param(
-        [string]$Path,
-
-        [string]$Container,
-
-        [string]$Category,
-
-        [int]$Count=1,
-
-        [switch]$Overwrite
-    )
-
-    if( ($null -ne $Path) -and ($Path -ne [string]::Empty) )
-    {
-        if( (Test-Path $Path) -and !$Overwrite )
-        {
-            Write-Error "Output File Already Exists, use Overwrite switch to overwrite the file."
-            return
-        }
-    }
-
-    $filesData = @()
-    for($i=0; $i -lt $Count; $i++)
-    {
-        $file = Get-RandomEmployeeFile -Container $Container -Category $Category
-        $file #send $file to the pipeline        
-        Write-Verbose $file
-
-        $filesData += $file
-
-    }
-
-    if( ($null -ne $Path) -and ($Path -ne [string]::Empty) )
-    {
-        $filesData | Export-Csv $Path -NoTypeInformation -Force
-        Write-Verbose "Exported Employee Files to '$Path'"
-    }
-
-}
-#Export-ModuleMember -Function Get-RandomEmployeeFilesImportFile
 
