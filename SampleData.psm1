@@ -136,6 +136,30 @@ function Get-InvoiceData
     Write-Output $invoiceData
 }
 
+function Get-CompanyData
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$false)]
+        [ValidateSet('pdf','docx','doc','txt','rtf')]
+        [string]$FileType = 'pdf'
+    )
+
+    Write-Verbose "Get-CompanyData"
+
+    $index = $script:rand.Next(0,($companies.Count))
+    $companyData = @{}
+    $companyData['Company']      = $companies[$index].COMPANY.Trim('.')
+    $companyData['Country']      = $companies[$index].COUNTRY
+    $companyData['FileType']     = $FileType
+    $companyData['CompanyDate']  = Get-Date -Year (Get-Random -Minimum 2001 -Maximum 2018) -Month (Get-Random -Minimum 1 -Maximum 12) -Day (Get-Random -Minimum 1 -Maximum 28)
+    $companyData['CompanyValue'] = Get-Random -min 1000 -max 100000
+    $companyData['Filename']     = "{0} - {1}.{2}" -f $companyData['Company'], ($companyData['CompanyDate'].ToString('yyyy-MM-dd')), $FileType
+
+    $companyData = New-Object -TypeName PSObject -Property $companyData 
+    Write-Output $companyData
+}
+
 function New-InvoiceFile
 {
     [CmdletBinding(DefaultParameterSetName='LiteralPath')]
